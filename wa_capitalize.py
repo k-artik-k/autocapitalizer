@@ -1,21 +1,30 @@
 """
-wa_capitalize.py - capitalise the first letter of each sentence, only inside WhatsApp.
-Windows only, no pip installs needed.
+wa_capitalize.py - WhatsApp helper (Windows): capital letter at the start of each sentence,
+and contraction fixes (lets -> let's, dont -> don't, i -> I ...). Lives in the system tray.
 
-    python wa_capitalize.py            run it
-    python wa_capitalize.py --debug    also print which window/process you are typing in
+    pythonw wa_capitalize.py            run silently (no console window)
+    python  wa_capitalize.py --debug    run with a console and print which window you are typing in
 
-    Ctrl+Alt+F11   pause / resume
-    Ctrl+Alt+F12   quit
+Tray icon menu: pause/resume, Start with Windows, edit your own corrections, Quit.
+Hotkeys:        Ctrl+Alt+F11 pause/resume     Ctrl+Alt+F12 quit
+
+Needs:  pip install pystray pillow
 """
 import ctypes
 import os
 import sys
+import threading
+import winreg
 from ctypes import wintypes
 
-from sentence_engine import SentenceTracker
+import pystray
+from PIL import Image, ImageDraw
+
+import autocorrect
+from sentence_engine import Typist, VK_BACK
 
 DEBUG = "--debug" in sys.argv
+APP_NAME = "WhatsAppCapitalize"
 
 # ---------------------------------------------------------------------------
 # What counts as "WhatsApp"  (edit these after running with --debug)
@@ -36,6 +45,11 @@ def is_target(proc, title):
     return False
 
 
+def app_dir():
+    base = sys.executable if getattr(sys, "frozen", False) else __file__
+    return os.path.dirname(os.path.abspath(base))
+
+
 # ---------------------------------------------------------------------------
 # Win32 plumbing
 # ---------------------------------------------------------------------------
@@ -43,6 +57,7 @@ user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
 WH_KEYBOARD_LL = 13
+WM_QUIT = 0x0012
 WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP = 0x0100, 0x0101, 0x0104, 0x0105
 LLKHF_INJECTED = 0x10
 INPUT_KEYBOARD = 1
@@ -50,6 +65,7 @@ KEYEVENTF_KEYUP, KEYEVENTF_UNICODE = 0x0002, 0x0004
 VK_SHIFT, VK_CONTROL, VK_MENU, VK_CAPITAL = 0x10, 0x11, 0x12, 0x14
 VK_LWIN, VK_RWIN, VK_F11, VK_F12 = 0x5B, 0x5C, 0x7A, 0x7B
 MODIFIER_VKS = {0x10, 0x11, 0x12, 0x14, 0x5B, 0x5C, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5}
+ERROR_ALREADY_EXISTS = 183
 
 LRESULT = ctypes.c_ssize_t
 ULONG_PTR = wintypes.WPARAM
@@ -106,6 +122,7 @@ user32.ToUnicodeEx.argtypes = (wintypes.UINT, wintypes.UINT, ctypes.POINTER(ctyp
                                wintypes.LPWSTR, ctypes.c_int, wintypes.UINT, wintypes.HANDLE)
 user32.SendInput.argtypes = (wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int)
 user32.SendInput.restype = wintypes.UINT
+user32.PostThreadMessageW.argtypes = (wintypes.DWORD, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
 kernel32.GetModuleHandleW.argtypes = (wintypes.LPCWSTR,)
 kernel32.GetModuleHandleW.restype = wintypes.HMODULE
 kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
@@ -113,6 +130,8 @@ kernel32.OpenProcess.restype = wintypes.HANDLE
 kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
 kernel32.QueryFullProcessImageNameW.argtypes = (wintypes.HANDLE, wintypes.DWORD,
                                                 wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD))
+kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+kernel32.CreateMutexW.restype = wintypes.HANDLE
 
 
 def key_down(vk):
@@ -174,38 +193,120 @@ def vk_to_char(vk, scan, shift, caps):
     return buf.value[:1] if n >= 1 else ""
 
 
-def send_char(ch):
-    """Type one Unicode character via SendInput."""
-    def make(flags):
-        u = _INPUTUNION()
-        u.ki = KEYBDINPUT(0, ord(ch), flags, 0, 0)
-        return INPUT(INPUT_KEYBOARD, u)
-    events = (INPUT * 2)(make(KEYEVENTF_UNICODE), make(KEYEVENTF_UNICODE | KEYEVENTF_KEYUP))
-    user32.SendInput(2, events, ctypes.sizeof(INPUT))
+def _ki(vk=0, scan=0, flags=0):
+    u = _INPUTUNION()
+    u.ki = KEYBDINPUT(vk, scan, flags, 0, 0)
+    return INPUT(INPUT_KEYBOARD, u)
+
+
+def send_sequence(backspaces=0, text="", vk_after=0):
+    """Press Backspace N times, type `text`, then tap one more key - all in ONE SendInput call
+    so nothing the user types can slip in between."""
+    events = []
+    for _ in range(backspaces):
+        events += [_ki(vk=VK_BACK), _ki(vk=VK_BACK, flags=KEYEVENTF_KEYUP)]
+    for ch in text:
+        events += [_ki(scan=ord(ch), flags=KEYEVENTF_UNICODE),
+                   _ki(scan=ord(ch), flags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)]
+    if vk_after:
+        events += [_ki(vk=vk_after), _ki(vk=vk_after, flags=KEYEVENTF_KEYUP)]
+    if events:
+        batch = (INPUT * len(events))(*events)
+        user32.SendInput(len(events), batch, ctypes.sizeof(INPUT))
+
+
+# ---------------------------------------------------------------------------
+# Tray icon, enable/disable, autostart
+# ---------------------------------------------------------------------------
+tray = None
+enabled = True
+hook_tid = 0
+
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+
+def make_icon(on=True):
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle((2, 2, 62, 62), radius=14, fill=(37, 211, 102, 255) if on else (128, 128, 128, 255))
+    d.line([(17, 50), (32, 13), (47, 50)], fill="white", width=6, joint="curve")   # an "A"
+    d.line([(23, 38), (41, 38)], fill="white", width=5)
+    return img
+
+
+def set_enabled(value):
+    global enabled
+    enabled = value
+    if tray:
+        tray.icon = make_icon(value)
+        tray.title = "WhatsApp Capitalise - " + ("on" if value else "paused")
+    print("resumed" if value else "paused")
+
+
+def startup_command():
+    if getattr(sys, "frozen", False):
+        return f'"{sys.executable}"'
+    pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    if not os.path.exists(pythonw):
+        pythonw = sys.executable
+    return f'"{pythonw}" "{os.path.abspath(__file__)}"'
+
+
+def startup_enabled():
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
+            winreg.QueryValueEx(key, APP_NAME)
+            return True
+    except OSError:
+        return False
+
+
+def toggle_startup(*_):
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+        if startup_enabled():
+            winreg.DeleteValue(key, APP_NAME)
+        else:
+            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, startup_command())
+
+
+def open_corrections(*_):
+    path = os.path.join(app_dir(), "my_corrections.txt")
+    if not os.path.exists(path):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("# One per line:   what you type = what it becomes\n"
+                    "# Lines starting with # are ignored. Save the file and it works immediately.\n"
+                    "# omw = on my way\n"
+                    "# ill = I'll\n")
+    os.startfile(path)
+
+
+def quit_app(*_):
+    if hook_tid:
+        user32.PostThreadMessageW(hook_tid, WM_QUIT, 0, 0)
+    if tray:
+        tray.stop()
 
 
 # ---------------------------------------------------------------------------
 # The hook
 # ---------------------------------------------------------------------------
-tracker = SentenceTracker()
-enabled = True
+typist = Typist()
 was_in_target = False
 swallowed = set()     # keys whose real key-down we replaced (so we also hide key-up / repeats)
 
 
 def handle_keydown(kb):
     """Return True to block the real key press."""
-    global enabled, was_in_target
+    global was_in_target
     vk = kb.vkCode
     ctrl, alt = key_down(VK_CONTROL), key_down(VK_MENU)
     win = key_down(VK_LWIN) or key_down(VK_RWIN)
 
     if ctrl and alt and vk == VK_F12:
-        user32.PostQuitMessage(0)
+        threading.Thread(target=quit_app, daemon=True).start()
         return True
     if ctrl and alt and vk == VK_F11:
-        enabled = not enabled
-        print("resumed" if enabled else "paused")
+        set_enabled(not enabled)
         return True
     if not enabled or vk in MODIFIER_VKS:
         return False
@@ -215,7 +316,7 @@ def handle_keydown(kb):
         was_in_target = False
         return False
     if not was_in_target:                # just switched into WhatsApp
-        tracker.reset()
+        typist.reset()
         was_in_target = True
 
     if vk in swallowed:                  # auto-repeat of a key we already replaced
@@ -226,11 +327,12 @@ def handle_keydown(kb):
     caps = bool(user32.GetKeyState(VK_CAPITAL) & 1)
     ch = "" if combo else vk_to_char(vk, kb.scanCode, shift, caps)
 
-    if tracker.feed(vk, ch, combo):
-        swallowed.add(vk)
-        send_char(ch.upper())
-        return True
-    return False
+    plan = typist.process(vk, ch, combo)
+    if plan is None:
+        return False
+    swallowed.add(vk)
+    send_sequence(plan.backspaces, plan.text, plan.vk_after)
+    return True
 
 
 @HOOKPROC
@@ -250,16 +352,40 @@ def hook_proc(n_code, w_param, l_param):
     return user32.CallNextHookEx(None, n_code, w_param, l_param)
 
 
-def main():
+def hook_thread():
+    """The keyboard hook needs its own thread with a message loop."""
+    global hook_tid
+    hook_tid = kernel32.GetCurrentThreadId()
     hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, hook_proc, kernel32.GetModuleHandleW(None), 0)
     if not hook:
-        raise ctypes.WinError(ctypes.get_last_error())
-    print("WhatsApp auto-capitalise running.  Ctrl+Alt+F11 pause, Ctrl+Alt+F12 quit.")
+        print("could not install keyboard hook:", ctypes.WinError(ctypes.get_last_error()))
+        quit_app()
+        return
     msg = wintypes.MSG()
     while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
         user32.TranslateMessage(ctypes.byref(msg))
         user32.DispatchMessageW(ctypes.byref(msg))
     user32.UnhookWindowsHookEx(hook)
+
+
+def main():
+    global tray
+    mutex = kernel32.CreateMutexW(None, False, "Local\\WhatsAppCapitalizeSingleton")
+    if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:   # already running: don't double-type
+        return
+    autocorrect.set_folder(app_dir())
+    threading.Thread(target=hook_thread, daemon=True).start()
+
+    menu = pystray.Menu(
+        pystray.MenuItem("Capitalise + fix words", lambda *_: set_enabled(not enabled),
+                         checked=lambda item: enabled, default=True),
+        pystray.MenuItem("Start with Windows", toggle_startup, checked=lambda item: startup_enabled()),
+        pystray.MenuItem("Edit my corrections...", open_corrections),
+        pystray.MenuItem("Quit", quit_app),
+    )
+    tray = pystray.Icon(APP_NAME, make_icon(True), "WhatsApp Capitalise - on", menu)
+    tray.run()                 # blocks until Quit
+    del mutex
 
 
 if __name__ == "__main__":

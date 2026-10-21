@@ -1,8 +1,12 @@
 """
-sentence_engine.py - decides WHEN the next letter should be capitalised.
+sentence_engine.py - decides WHAT to type: sentence-start capitals and contraction fixes.
 
-Pure logic, no Windows calls. The Windows layer feeds it one key at a time.
+Pure logic, no Windows calls. The Windows layer feeds it one key at a time and
+carries out the returned Plan.
 """
+from dataclasses import dataclass
+
+import autocorrect
 
 NEUTRAL, START, AFTER_PUNCT = "neutral", "start", "after_punct"
 
@@ -17,6 +21,22 @@ ABBREVIATIONS = {"e.g.", "i.e.", "mr.", "mrs.", "ms.", "dr.", "vs.", "approx."}
 
 OPENERS = set("\"'([{\u00bf\u00a1")   # allowed between ". " and the first letter
 CLOSERS = set("\"')]}")               # allowed between "." and the space
+BOUNDARY_CHARS = set(" .,!?;:")       # finishing a word with one of these triggers autocorrect
+
+
+@dataclass
+class Fix:
+    prefix: str
+    original: str
+    replacement: str
+
+
+@dataclass
+class Plan:
+    """Swallow the real key and instead: press Backspace N times, type text, then press vk_after."""
+    backspaces: int = 0
+    text: str = ""
+    vk_after: int = 0
 
 
 class SentenceTracker:
@@ -27,9 +47,26 @@ class SentenceTracker:
         """Call when focus enters the target app: assume an empty message box."""
         self.state = START
         self.hard = True          # True = start of box/line, False = after ". "
-        self.word = ""            # characters since the last space
+        self.word = ""            # what is on screen since the last space
         self.seg_len = 0          # chars typed since the last capital we applied
         self.seg_kind = True      # the 'hard' flag to restore if all of them get deleted
+        self.last_fix = None      # the autocorrect we just did (Backspace undoes it)
+        self.blocked_word = ""    # a word the user un-corrected; don't fix it again
+
+    def apply_fix(self, n, replacement):
+        """The last n chars of the current word were replaced on screen."""
+        new = self.word[:-n] + replacement
+        self.word = new.rsplit(" ", 1)[-1]
+        if self.seg_len:
+            self.seg_len += len(replacement) - n
+
+    def undo_fix(self):
+        fix, self.last_fix = self.last_fix, None
+        if fix:
+            self.word = fix.prefix + fix.original
+            self.blocked_word = self.word
+            self.state = NEUTRAL
+            self.seg_len = 0
 
     def feed(self, vk, ch, combo=False):
         """
@@ -39,12 +76,15 @@ class SentenceTracker:
         combo - True if Ctrl/Alt/Win is held (shortcut, not typing)
         Returns True if `ch` should be typed as an uppercase letter instead.
         """
+        self.last_fix = None
+
         if combo or vk in NAV_KEYS:
-            self.state, self.word, self.seg_len = NEUTRAL, "", 0
+            self.state, self.word, self.seg_len, self.blocked_word = NEUTRAL, "", 0, ""
             return False
 
         if vk == VK_RETURN:                       # message sent, or Shift+Enter newline
             self.state, self.hard, self.word, self.seg_len = START, True, "", 0
+            self.blocked_word = ""
             return False
 
         if vk == VK_BACK:
@@ -68,7 +108,7 @@ class SentenceTracker:
         if ch == " ":
             if self.state == AFTER_PUNCT:
                 self.state, self.hard = START, False
-            self.word = ""
+            self.word, self.blocked_word = "", ""
             return False
 
         if ch in ".?!":
@@ -85,13 +125,53 @@ class SentenceTracker:
             self.word += ch
             return False
 
+        if self.state == START and ch.isalpha():
+            self.seg_len, self.seg_kind = 1, self.hard
+            self.state = NEUTRAL
+            upper = ch.upper()
+            self.word += upper
+            return upper != ch
+
         self.word += ch
-        if self.state == START:
-            if ch.isalpha():
-                self.seg_len, self.seg_kind = 1, self.hard
-                self.state = NEUTRAL
-                return ch.upper() != ch
-            if ch in OPENERS:
-                return False
+        if self.state == START and ch in OPENERS:
+            return False
         self.state = NEUTRAL
         return False
+
+
+class Typist:
+    """Tracker + autocorrect. process() says what to do about each key press."""
+
+    def __init__(self):
+        self.t = SentenceTracker()
+
+    def reset(self):
+        self.t.reset()
+
+    def process(self, vk, ch, combo=False):
+        """Returns None to let the key through, or a Plan to carry out instead."""
+        t = self.t
+
+        # Backspace right after an autocorrected word + space = undo the correction.
+        fix = t.last_fix
+        if vk == VK_BACK and fix and not combo:
+            t.undo_fix()
+            return Plan(backspaces=len(fix.replacement) + 1, text=fix.original)
+
+        # Finishing a word: maybe fix it first.
+        finishing = not combo and (ch in BOUNDARY_CHARS or vk == VK_RETURN)
+        if finishing and t.word and t.word != t.blocked_word:
+            found = autocorrect.fix_for(t.word)
+            if found:
+                prefix, core, replacement = found
+                t.apply_fix(len(core), replacement)
+                t.feed(vk, ch, combo)
+                if ch == " ":
+                    t.last_fix = Fix(prefix, core, replacement)
+                if vk == VK_RETURN:
+                    return Plan(len(core), replacement, VK_RETURN)
+                return Plan(len(core), replacement + ch)
+
+        if t.feed(vk, ch, combo):
+            return Plan(text=ch.upper())
+        return None
