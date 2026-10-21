@@ -3,6 +3,9 @@ autocorrect.py - contraction / "i" fixes, plus your own list from my_corrections
 
 Only whole words are touched, and only when you finish them (space, punctuation, Enter).
 Words containing digits, dots or @ (links, emails) are never touched.
+
+The replacement text is typed into your chats, so the custom file is treated as untrusted:
+size-capped, entry-capped, keys must be plain letters, values must be short printable text.
 """
 import os
 import re
@@ -28,11 +31,25 @@ DEFAULTS = {
 # Deliberately NOT included because they are real words: ill, id, hell, well, were, its, wed, shed.
 # Add them yourself in my_corrections.txt if you want them.
 
-CORRECTIONS = dict(DEFAULTS)
+MAX_FILE_BYTES = 64 * 1024
+MAX_ENTRIES = 500
+MAX_VALUE_LEN = 120
+KEY_RE = re.compile(r"^[a-z']{1,40}$")
 WORD_RE = re.compile(r"^([\"'(\[]*)([A-Za-z']+)$")
 
+CORRECTIONS = dict(DEFAULTS)
 _path = None
 _mtime = None
+
+
+def clean_entry(key, value):
+    """Return a safe (key, value) pair, or None if the entry should be ignored."""
+    key, value = key.strip().lower(), value.strip()
+    if not KEY_RE.match(key):
+        return None
+    if not (1 <= len(value) <= MAX_VALUE_LEN) or not value.isprintable():
+        return None        # also rejects tabs, newlines, zero-width and other invisible characters
+    return key, value
 
 
 def set_folder(folder):
@@ -57,15 +74,25 @@ def _reload(force=False):
     CORRECTIONS.update(DEFAULTS)
     if mtime is None:
         return
-    with open(_path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key, value = key.strip().lower(), value.strip()
-            if key and value:
-                CORRECTIONS[key] = value
+    try:
+        if os.path.getsize(_path) > MAX_FILE_BYTES:
+            return
+        with open(_path, encoding="utf-8") as f:
+            added = 0
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                entry = clean_entry(key, value)
+                if entry:
+                    CORRECTIONS[entry[0]] = entry[1]
+                    added += 1
+                    if added >= MAX_ENTRIES:
+                        break
+    except (OSError, UnicodeDecodeError):
+        CORRECTIONS.clear()
+        CORRECTIONS.update(DEFAULTS)
 
 
 def fix_for(word):

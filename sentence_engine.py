@@ -68,12 +68,13 @@ class SentenceTracker:
             self.state = NEUTRAL
             self.seg_len = 0
 
-    def feed(self, vk, ch, combo=False):
+    def feed(self, vk, ch, combo=False, capitalize=True):
         """
         Process one key press.
         vk    - virtual key code
         ch    - the character this key produces right now ("" if none)
         combo - True if Ctrl/Alt/Win is held (shortcut, not typing)
+        capitalize - False = still track sentences but never ask for an uppercase letter
         Returns True if `ch` should be typed as an uppercase letter instead.
         """
         self.last_fix = None
@@ -128,7 +129,7 @@ class SentenceTracker:
         if self.state == START and ch.isalpha():
             self.seg_len, self.seg_kind = 1, self.hard
             self.state = NEUTRAL
-            upper = ch.upper()
+            upper = ch.upper() if capitalize else ch
             self.word += upper
             return upper != ch
 
@@ -142,11 +143,20 @@ class SentenceTracker:
 class Typist:
     """Tracker + autocorrect. process() says what to do about each key press."""
 
+    MAX_BACKSPACES = 64
+
     def __init__(self):
         self.t = SentenceTracker()
+        self.capitalize = True     # tray switch: capital at sentence start
+        self.fix_words = True      # tray switch: let's / don't / I'm ...
 
     def reset(self):
         self.t.reset()
+
+    def lose_track(self):
+        """Forget everything typed so far (left the app, paused, or someone else typed for us)."""
+        t = self.t
+        t.state, t.word, t.seg_len, t.blocked_word, t.last_fix = NEUTRAL, "", 0, "", None
 
     def process(self, vk, ch, combo=False):
         """Returns None to let the key through, or a Plan to carry out instead."""
@@ -160,9 +170,9 @@ class Typist:
 
         # Finishing a word: maybe fix it first.
         finishing = not combo and (ch in BOUNDARY_CHARS or vk == VK_RETURN)
-        if finishing and t.word and t.word != t.blocked_word:
+        if self.fix_words and finishing and t.word and t.word != t.blocked_word:
             found = autocorrect.fix_for(t.word)
-            if found:
+            if found and len(found[1]) <= self.MAX_BACKSPACES:
                 prefix, core, replacement = found
                 t.apply_fix(len(core), replacement)
                 t.feed(vk, ch, combo)
@@ -172,6 +182,6 @@ class Typist:
                     return Plan(len(core), replacement, VK_RETURN)
                 return Plan(len(core), replacement + ch)
 
-        if t.feed(vk, ch, combo):
+        if t.feed(vk, ch, combo, self.capitalize):
             return Plan(text=ch.upper())
         return None
