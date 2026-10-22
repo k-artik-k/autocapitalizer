@@ -1,109 +1,167 @@
-# WhatsAppCapitalize
+# WhatsApp Capitalise
 
-Automatically capitalize the first letter of sentences while typing.
-
-WhatsAppCapitalize is a lightweight background utility designed to make everyday typing cleaner and more convenient.
+WhatsApp Capitalise is a lightweight background utility that capitalizes the first letter of sentences and fixes selected contractions while you type in WhatsApp. It runs from the Windows system tray or the macOS menu bar and only acts while WhatsApp is the active application or browser tab.
 
 ## Features
 
-- **Automatic capitalization:** Capitalizes the first letter of sentences while typing.
-- **Background operation:** Runs in the system tray on supported platforms.
-- **Lightweight:** Packaged as a standalone application.
-- **Easy to use:** Launch the application and type normally.
+- Capitalizes the first letter at the start of a message or sentence.
+- Corrects common contractions, including `dont` to `don't` and `im` to `I'm`.
+- Supports custom corrections through a local text file.
+- Works with WhatsApp Desktop and WhatsApp Web in supported browsers.
+- Keeps preferences and custom corrections on the local device. It does not send, log, or save message content.
 
-## Download
+## Supported platforms
 
-Visit the [Releases](../../releases) page and download the appropriate build for your operating system.
+| Platform | Package | Supported environments |
+| --- | --- | --- |
+| Windows 10/11, 64-bit | `WhatsAppCapitalize-Setup-<version>-win64.exe` | WhatsApp Desktop, Chrome, Edge, Firefox, Brave, Opera, Vivaldi |
+| macOS, Apple silicon or Intel | `WhatsAppCapitalize-<version>-macos-<architecture>.dmg` | WhatsApp Desktop, Safari, Chrome, Edge, Firefox, Brave, Opera, Vivaldi |
+
+Python is not required to run either packaged release.
+
+## Install on Windows
+
+Download `WhatsAppCapitalize-Setup-<version>-win64.exe` from the project release assets and run it. The wizard installs the app for the current user, creates a Start Menu entry, offers an optional desktop shortcut, and includes an uninstaller.
+
+From PowerShell, run the installer with:
+
+```powershell
+Start-Process -FilePath .\WhatsAppCapitalize-Setup-1.0.0-win64.exe -Wait
+```
+
+For an unattended installation:
+
+```powershell
+.\WhatsAppCapitalize-Setup-1.0.0-win64.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+```
+
+To run the portable release instead of installing it:
+
+```powershell
+.\WhatsAppCapitalize.exe
+```
+
+## Install on macOS
+
+Download the DMG that matches the target Mac's architecture, open it, and drag `WhatsAppCapitalize.app` to the Applications folder. Then open it from Applications.
+
+The equivalent Terminal commands are:
+
+```bash
+hdiutil attach "WhatsAppCapitalize-1.0.0-macos-arm64.dmg"
+sudo ditto "/Volumes/WhatsApp Capitalise/WhatsAppCapitalize.app" "/Applications/WhatsAppCapitalize.app"
+hdiutil detach "/Volumes/WhatsApp Capitalise"
+open -a "/Applications/WhatsAppCapitalize.app"
+```
+
+On first launch, grant the app access in **System Settings > Privacy & Security > Accessibility**. This permission is required for macOS to let the app observe and replace the relevant keyboard events. If you grant permission after the app is already running, choose **Restart keyboard listener** from its menu.
+
+Unsigned or ad-hoc-signed development builds can trigger a Gatekeeper warning. Use a Developer ID-signed and notarized DMG for distribution outside your own Mac.
+
+## Using the application
+
+Launch the app and leave it running in the notification area or menu bar. Its icon is green while active, grey while paused, and red if the keyboard listener is unavailable.
+
+The menu lets you:
+
+- Pause or resume processing.
+- Enable or disable sentence capitalization.
+- Enable or disable contraction fixing.
+- Edit custom corrections.
+- Open the local settings folder.
+
+Keyboard shortcuts:
+
+| Platform | Pause/resume | Quit |
+| --- | --- | --- |
+| Windows | `Ctrl + Alt + F11` | `Ctrl + Alt + F12` |
+| macOS | `Command + Option + F11` | `Command + Option + F12` |
+
+## Custom corrections and settings
+
+Choose **Edit my corrections** from the menu to create or open `my_corrections.txt`. Add one correction per line:
+
+```text
+omw = on my way
+ill = I'll
+```
+
+Changes take effect when the file is saved; restarting the app is not required.
+
+Settings and custom corrections are stored here:
+
+| Platform | Location |
+| --- | --- |
+| Windows | `%APPDATA%\WhatsAppCapitalize` |
+| macOS | `~/Library/Application Support/WhatsAppCapitalize` |
+
+Uninstalling the application intentionally preserves this folder so personal corrections and preferences are retained when upgrading or reinstalling.
+
+## Build from source
 
 ### Windows
 
-1. Download `WhatsAppCapitalize-Windows-x64.zip`.
-2. Extract the ZIP file.
-3. Run `WhatsAppCapitalize.exe`.
-4. Keep the `_internal` folder alongside the executable.
+Prerequisites:
 
-### macOS
+- Python 3.12 or later
+- [Inno Setup 6](https://jrsoftware.org/isinfo.php)
 
-A macOS build must be generated separately on a Mac. Check the Releases page for an available macOS download.
-
-## System Requirements
-
-- Windows 10 or Windows 11, 64-bit, for the Windows release.
-- macOS, for a separately built and tested macOS release.
-- Python is not required to run a packaged release.
-
-## Usage
-
-1. Launch the application.
-2. Allow it to run in the background.
-3. Type normally in supported applications.
-4. Access available controls through the system tray or menu bar, depending on the platform and implementation.
-
-## Built With
-
-- Python
-- [Pystray](https://github.com/moses-palmer/pystray)
-- [Pillow](https://python-pillow.org/)
-- [PyInstaller](https://pyinstaller.org/)
-
-## Building from Source
-
-### Prerequisites
-
-Install Python 3 and pip for your operating system.
-
-### Windows
-
-Open PowerShell in the project directory.
-
-Install dependencies:
+Install the Python dependencies:
 
 ```powershell
-python -m pip install pystray pillow pyinstaller
+python -m pip install --upgrade pyinstaller pystray pillow
 ```
 
-Generate the application icon:
+Build the portable executable and installer wizard:
 
 ```powershell
-python wa_capitalize.py --make-icon
+.\build-release.ps1 -Version 1.0.0
 ```
 
-Build the application:
-
-```powershell
-python -m PyInstaller --noconsole --onedir --icon icon.ico --name WhatsAppCapitalize wa_capitalize.py
-```
-
-The output will be available in:
+Outputs:
 
 ```text
-dist/WhatsAppCapitalize/
+dist\WhatsAppCapitalize.exe
+installer\output\WhatsAppCapitalize-Setup-1.0.0-win64.exe
 ```
 
 ### macOS
 
-Open Terminal in the project directory.
-
-Install dependencies:
+Build macOS releases on macOS. PyInstaller packages must be produced on their target operating system.
 
 ```bash
-python3 -m pip install pystray pillow pyinstaller
+chmod +x build-macos.sh
+./build-macos.sh 1.0.0
 ```
 
-Build the application:
+The script creates an isolated `.venv-macos` environment, installs the dependencies in `requirements-macos.txt`, builds the app bundle, and creates a DMG.
 
-```bash
-python3 -m PyInstaller --noconsole --onedir --name WhatsAppCapitalize wa_capitalize.py
-```
-
-The output will be available in:
+Outputs:
 
 ```text
-dist/WhatsAppCapitalize/
+dist/WhatsAppCapitalize.app
+release/WhatsAppCapitalize-1.0.0-macos-arm64.dmg
 ```
 
-**Note:** The macOS build must be created and tested on macOS. The Windows-specific `icon.ico` option is omitted here. macOS permissions, accessibility requirements, and menu bar behavior may require additional implementation and configuration.
+The default architecture is the architecture of the Mac performing the build. For a universal build, use a universal Python installation and run:
+
+```bash
+TARGET_ARCH=universal2 ./build-macos.sh 1.0.0
+```
+
+To sign a release with a Developer ID certificate:
+
+```bash
+CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./build-macos.sh 1.0.0
+```
+
+## Development notes
+
+- `wa_capitalize.py` selects the appropriate platform backend at runtime.
+- `windows_app.py` contains the Windows keyboard hook and tray implementation.
+- `macos_app.py` contains the macOS Quartz event tap and menu-bar implementation.
+- `sentence_engine.py` contains platform-independent capitalization and correction logic.
 
 ## License
 
-See the repository's license file for usage and redistribution terms.
+See the repository license for use and redistribution terms.

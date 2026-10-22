@@ -1,0 +1,7 @@
+# Install these on macOS before building WhatsApp Capitalise.
+Pillow
+pystray
+pyobjc-framework-ApplicationServices
+pyobjc-framework-Cocoa
+pyobjc-framework-Quartz
+pyinstaller

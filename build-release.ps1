@@ -23,7 +23,8 @@ if (-not $InnoSetupCompiler -or -not (Test-Path -LiteralPath $InnoSetupCompiler)
 
 Push-Location $ProjectRoot
 try {
-    python -m PyInstaller --noconfirm --clean --onefile --windowed --icon icon.ico --name $AppName wa_capitalize.py
+    python -m PyInstaller --noconfirm --clean --onefile --windowed --icon icon.ico `
+        --hidden-import windows_app --name $AppName wa_capitalize.py
 
     $installerScript = Join-Path $ProjectRoot 'installer\WhatsAppCapitalize.iss'
     & $InnoSetupCompiler "/DMyAppVersion=$Version" $installerScript

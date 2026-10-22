@@ -2,6 +2,8 @@
 
 # Local installer output (the .iss definition and release script are tracked)
 installer/output/
+release/
+.venv-macos/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
