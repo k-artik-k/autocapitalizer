@@ -1,0 +1,2 @@
+-r windows.txt
+pytest>=8.0

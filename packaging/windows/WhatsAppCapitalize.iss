@@ -1,9 +1,9 @@
 ; Windows installer for WhatsApp Capitalise.
-; Compile with Inno Setup 6 (ISCC.exe), after building dist\WhatsAppCapitalize.exe.
+; Compile with Inno Setup 6 (ISCC.exe), after building dist\windows\WhatsAppCapitalize.exe.
 
 #define MyAppName "WhatsApp Capitalise"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.0.0"
+  #define MyAppVersion "2.1.0"
 #endif
 #define MyAppPublisher "WhatsApp Capitalise"
 #define MyAppExeName "WhatsAppCapitalize.exe"
@@ -18,9 +18,9 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
-OutputDir=output
+OutputDir=..\..\dist\windows
 OutputBaseFilename=WhatsAppCapitalize-Setup-{#MyAppVersion}-win64
-SetupIconFile=..\icon.ico
+SetupIconFile=..\..\assets\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -37,7 +37,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
 
 [Files]
-Source: "..\dist\WhatsAppCapitalize.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\dist\windows\WhatsAppCapitalize.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

@@ -15,9 +15,9 @@ from AppKit import NSWorkspace
 from PIL import Image, ImageDraw
 import Quartz
 
-import autocorrect
-import settings as settings_store
-from sentence_engine import Typist, VK_BACK, VK_RETURN
+from whatsapp_capitalize import autocorrect
+from whatsapp_capitalize import settings as settings_store
+from whatsapp_capitalize.sentence_engine import Typist, VK_BACK, VK_RETURN
 
 
 DEBUG = "--debug" in sys.argv

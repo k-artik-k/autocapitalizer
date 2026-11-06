@@ -7,6 +7,7 @@ MAX_BYTES = 4096
 
 
 def load(path):
+    path = os.fspath(path)
     settings = dict(DEFAULTS)
     try:
         if os.path.getsize(path) > MAX_BYTES:
@@ -23,6 +24,7 @@ def load(path):
 
 
 def save(path, settings):
+    path = os.fspath(path)
     tmp = path + ".tmp"
     clean = {key: bool(settings.get(key, default)) for key, default in DEFAULTS.items()}
     with open(tmp, "w", encoding="utf-8") as f:

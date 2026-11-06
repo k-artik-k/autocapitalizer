@@ -1,0 +1,4 @@
+# Runtime and build dependencies for the Windows executable.
+Pillow>=11.0
+pystray>=0.19
+pyinstaller>=6.0

@@ -1,12 +1,7 @@
-"""
-sentence_engine.py - decides WHAT to type: sentence-start capitals and contraction fixes.
-
-Pure logic, no Windows calls. The Windows layer feeds it one key at a time and
-carries out the returned Plan.
-"""
+"""Platform-independent sentence capitalization and word-correction logic."""
 from dataclasses import dataclass
 
-import autocorrect
+from whatsapp_capitalize import autocorrect
 
 NEUTRAL, START, AFTER_PUNCT = "neutral", "start", "after_punct"
 

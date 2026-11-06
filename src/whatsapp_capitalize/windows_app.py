@@ -2,9 +2,8 @@
 windows_app.py - WhatsApp helper (Windows): capital letter at the start of each sentence,
 and contraction fixes (lets -> let's, dont -> don't, i -> I ...). Lives in the system tray.
 
-    pythonw wa_capitalize.py            run silently (no console window)
-    python  wa_capitalize.py --debug    run with a console and print which window you are typing in
-    python  wa_capitalize.py --make-icon    write icon.ico (for building the .exe) and exit
+    python -m whatsapp_capitalize            run silently (no console window)
+    python -m whatsapp_capitalize --debug    run with a console and print which window you are typing in
 
 Left-click the tray icon = pause / resume.  Right-click = menu.
 Hotkeys: Ctrl+Alt+F11 pause/resume     Ctrl+Alt+F12 quit
@@ -25,9 +24,9 @@ from ctypes import wintypes
 import pystray
 from PIL import Image, ImageDraw
 
-import autocorrect
-import settings as settings_store
-from sentence_engine import Typist, VK_BACK
+from whatsapp_capitalize import autocorrect
+from whatsapp_capitalize import settings as settings_store
+from whatsapp_capitalize.sentence_engine import Typist, VK_BACK
 
 DEBUG = "--debug" in sys.argv
 APP_NAME = "WhatsAppCapitalize"
@@ -356,7 +355,8 @@ def startup_command():
     pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
     if not os.path.exists(pythonw):
         pythonw = sys.executable
-    return f'"{pythonw}" "{os.path.abspath(__file__)}"'
+    entry_point = os.path.join(os.path.dirname(os.path.abspath(__file__)), "__main__.py")
+    return f'"{pythonw}" "{entry_point}"'
 
 
 def startup_enabled():
@@ -557,12 +557,6 @@ def _migrate_old_corrections():
 
 def main():
     global tray, settings
-    if "--make-icon" in sys.argv:
-        make_icon("on", 256).save("icon.ico", sizes=[(16, 16), (24, 24), (32, 32), (48, 48),
-                                                    (64, 64), (128, 128), (256, 256)])
-        print("wrote icon.ico")
-        return
-
     mutex = kernel32.CreateMutexW(None, False, "Local\\WhatsAppCapitalizeSingleton")
     if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:   # already running: don't double-type
         return
